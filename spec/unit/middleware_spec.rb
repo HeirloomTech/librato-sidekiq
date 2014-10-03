@@ -108,6 +108,7 @@ describe Librato::Sidekiq::Middleware do
     context 'when middleware is enabled and everything is whitlisted' do
 
       let(:some_enqueued_value) { 20 }
+      let(:heroku_mode) { false }
       let(:queue_stat_hash) { Hash[queue_name, some_enqueued_value] }
       let(:sidekiq_group) { double(measure: nil, increment: nil, group: nil) }
       let(:queue_group) { double(measure: nil, increment: nil, timing: nil, group: nil) }
@@ -116,6 +117,7 @@ describe Librato::Sidekiq::Middleware do
       before(:each) do
         middleware.enabled = true
         middleware.blacklist_queues = []
+        middleware.heroku_mode = heroku_mode
       end
 
       before(:each) do
@@ -144,6 +146,27 @@ describe Librato::Sidekiq::Middleware do
         expect(class_group).to receive(:timing).with "time", 0
 
         middleware.call(some_worker_instance, some_message, queue_name) {}
+      end
+
+      context "when running on heroku" do
+        let(:heroku_mode) { true }
+
+        before :each do
+          stub_const "ENV", {'DYNO' => dyno}
+        end
+
+        let(:dyno) { 'jerk.12' }
+
+        it 'identifies the source in calls to librato' do
+          expect(sidekiq_group).to receive(:group).and_yield(queue_group)
+          expect(queue_group).to receive(:group).with(queue_name).and_yield(class_group)
+
+          expect(queue_group).to receive(:increment).with "processed", {source: dyno}
+          expect(queue_group).to receive(:timing).with "time", 0, {source: dyno}
+          expect(queue_group).to receive(:measure).with "enqueued", some_enqueued_value, {source: dyno}
+
+          middleware.call(some_worker_instance, some_message, queue_name) {}
+        end
       end
 
     end

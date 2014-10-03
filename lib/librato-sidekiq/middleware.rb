@@ -7,7 +7,7 @@ module Librato
         true
       end
 
-      cattr_accessor :whitelist_queues, :blacklist_queues, :whitelist_classes, :blacklist_classes do
+      cattr_accessor :whitelist_queues, :blacklist_queues, :whitelist_classes, :blacklist_classes, :heroku_mode do
         []
       end
 
@@ -39,7 +39,8 @@ module Librato
           whitelist_queues: whitelist_queues,
           blacklist_queues: blacklist_queues,
           whitelist_classes: whitelist_classes,
-          blacklist_classes: blacklist_classes
+          blacklist_classes: blacklist_classes,
+          heroku_mode: heroku_mode
         }
       end
 
@@ -78,16 +79,17 @@ module Librato
         submit_general_stats tracking_group, stats
         return unless allowed_to_submit queue, worker_instance
         # puts "doing Librato insert"
+
         tracking_group.group queue.to_s do |q|
-          q.increment 'processed'
-          q.timing 'time', elapsed
-          q.measure 'enqueued', stats.queues[queue].to_i
+          q.increment *args_with_source('processed')
+          q.timing *args_with_source('time', elapsed)
+          q.measure *args_with_source('enqueued', stats.queues[queue].to_i)
 
           # using something like User.delay.send_email invokes
           # a class name with slashes. remove them in favor of underscores
           q.group msg['class'].underscore.gsub('/', '_') do |w|
-            w.increment 'processed'
-            w.timing 'time', elapsed
+            w.increment *args_with_source('processed')
+            w.timing *args_with_source('time', elapsed)
           end
         end
       end
@@ -121,6 +123,15 @@ module Librato
 
       def allowed_to_submit(queue, worker_instance)
         class_in_whitelist(worker_instance) && !class_in_blacklist(worker_instance) && queue_in_whitelist(queue) && !queue_in_blacklist(queue)
+      end
+
+    private
+
+      # Heroku-specific hack to identify the source of a metric
+      # See https://devcenter.heroku.com/articles/dynos#local-environment-variables
+      def args_with_source(*args)
+        args.push({source: ENV['DYNO']}) if heroku_mode
+        args
       end
     end
   end
